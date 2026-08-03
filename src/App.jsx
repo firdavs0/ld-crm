@@ -36,6 +36,17 @@ function calcInternEnd(startISO) {
 
 /* ------------------------------- storage hook ------------------------------- */
 
+function reportStorageIssue(action, key, err) {
+  const message = (err && err.message) || String(err);
+  // eslint-disable-next-line no-console
+  console.error(`[storage ${action}] ${key}:`, err);
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(
+      new CustomEvent("ld-storage-error", { detail: { action, key, message } })
+    );
+  }
+}
+
 // shared: true -> data is visible and editable by everyone who opens this artifact's link,
 // not just the current user. That's what makes this a team CRM instead of a personal one.
 function usePersisted(key, initial, shared = true) {
@@ -51,7 +62,9 @@ function usePersisted(key, initial, shared = true) {
           setValue(JSON.parse(res.value));
         }
       } catch (e) {
-        // key doesn't exist yet - keep initial
+        // key doesn't exist yet is expected - but a real connection/permission
+        // error will also land here, so surface it instead of hiding it
+        reportStorageIssue("чтение", key, e);
       } finally {
         if (!cancelled) setLoaded(true);
       }
@@ -66,7 +79,7 @@ function usePersisted(key, initial, shared = true) {
       try {
         await window.storage.set(key, JSON.stringify(value), shared);
       } catch (e) {
-        // ignore
+        reportStorageIssue("сохранение", key, e);
       }
     })();
   }, [key, value, loaded]);
@@ -315,6 +328,13 @@ const TOOLTIP_STYLE = { background: "#ffffff", border: "1px solid #e2e8f0", font
 export default function App() {
   const [activeTab, setActiveTab] = useState("dashboard");
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [storageError, setStorageError] = useState(null);
+
+  useEffect(() => {
+    const handler = (e) => setStorageError(e.detail);
+    window.addEventListener("ld-storage-error", handler);
+    return () => window.removeEventListener("ld-storage-error", handler);
+  }, []);
 
   const [trainings, setTrainings] = usePersisted("ld_trainings", []);
   const [planItems, setPlanItems] = usePersisted("ld_plan2026", []);
@@ -440,6 +460,22 @@ export default function App() {
 
       {/* main content */}
       <main className="flex-1 p-5 md:p-8 mt-12 md:mt-0 max-w-6xl">
+        {storageError && (
+          <div className="mb-5 flex items-start justify-between gap-3 bg-rose-50 border border-rose-200 text-rose-700 text-sm rounded-xl px-4 py-3">
+            <div>
+              <p className="font-medium">Данные не сохраняются ({storageError.action}).</p>
+              <p className="text-rose-600 mt-0.5">
+                {storageError.message} — проверьте настройки Supabase (переменные окружения и SQL-таблицу).
+              </p>
+            </div>
+            <button
+              onClick={() => setStorageError(null)}
+              className="text-rose-400 hover:text-rose-700 shrink-0"
+            >
+              <X size={16} />
+            </button>
+          </div>
+        )}
         {activeTab === "dashboard" && (
           <DashboardSection trainings={trainings} h={trainingH} />
         )}
